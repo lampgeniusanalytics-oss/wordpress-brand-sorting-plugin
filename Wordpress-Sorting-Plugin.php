@@ -514,6 +514,12 @@ function alternate_brands_page() {
         <div id="sort-order-viewer" style="margin-top:20px;"></div>
 
         <hr>
+        <h2>🔬 Algorithm Debugger - See Ranking Logic</h2>
+        <p>Shows how each product is ranked (stock, delivery speed, published date) and the final sort order.</p>
+        <button class="button button-primary" id="debug-algorithm">Debug Algorithm</button>
+        <div id="algorithm-debug-viewer" style="margin-top:20px;"></div>
+
+        <hr>
         <h2>🔍 Diagnostic Tool - Check Meta Values</h2>
         <p>This will show you the actual meta values in the database for the selected category.</p>
         <button class="button button-secondary" id="run-diagnostic">Run Diagnostic</button>
@@ -527,6 +533,22 @@ function alternate_brands_page() {
     </div>
 
     <script>
+    // Algorithm Debug handler
+    document.getElementById('debug-algorithm').addEventListener('click', function() {
+        const categoryId = document.getElementById('category-selector').value;
+        const viewerBox = document.getElementById('algorithm-debug-viewer');
+        viewerBox.innerHTML = '<p>Analyzing algorithm...</p>';
+
+        fetch(ajaxurl + '?action=debug_algorithm&category_id=' + categoryId)
+            .then(response => response.text())
+            .then(html => {
+                viewerBox.innerHTML = html;
+            })
+            .catch(() => {
+                viewerBox.innerHTML = '<p>Error running algorithm debug.</p>';
+            });
+    });
+
     // View Sort Order handler
     document.getElementById('view-sort-order').addEventListener('click', function() {
         const categoryId = document.getElementById('category-selector').value;
@@ -633,6 +655,88 @@ add_action('wp_ajax_process_single_category', function() {
 
     $message = alternate_brands_for_category($category_id);
     echo esc_html($message);
+    wp_die();
+});
+
+add_action('wp_ajax_debug_algorithm', function() {
+    if (!current_user_can('manage_woocommerce')) {
+        wp_die('Unauthorized', '', array('response' => 403));
+    }
+
+    $category_id = isset($_GET['category_id']) ? intval($_GET['category_id']) : 0;
+    if (!$category_id) {
+        echo '<p>Invalid category ID.</p>';
+        wp_die();
+    }
+
+    global $wpdb;
+
+    echo '<div style="background: #fff; padding: 20px; border: 1px solid #ccc; max-width: 100%; overflow-x: auto;">';
+    echo '<h3>🔬 Algorithm Debug - Step by Step</h3>';
+
+    // Get products
+    $products_query = $wpdb->prepare("
+        SELECT p.ID as product_id, p.post_title as product_title, p.post_date as product_date
+        FROM {$wpdb->posts} p
+        JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
+        JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'product_cat'
+        WHERE p.post_type = 'product' AND p.post_status = 'publish'
+        AND tt.term_id = %d
+        LIMIT 20
+    ", $category_id);
+
+    $products = $wpdb->get_results($products_query);
+
+    echo '<h4>Step 1: Product Data with Rankings</h4>';
+    echo '<table style="border-collapse: collapse; font-size: 11px;">';
+    echo '<tr style="background: #f1f1f1;">
+        <th style="padding: 5px; border: 1px solid #ddd;">ID</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Title</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Brand</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">First Word</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Stock?</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Delivery Rank</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Published Date</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Final Rank</th>
+    </tr>';
+
+    $product_data = array();
+    foreach ($products as $product) {
+        $product_id = $product->product_id;
+        $brands = wp_get_post_terms($product_id, 'pa_brand');
+        $brand = !empty($brands) ? $brands[0]->name : 'no-brand';
+        $first_word = strtolower(trim(strtok($product->product_title, ' ')));
+
+        $delivery_data = calculate_delivery_rank($product_id);
+        $rank = calculate_product_rank($product_id, $product->product_date);
+
+        $product_data[$product_id] = array(
+            'title' => $product->product_title,
+            'brand' => $brand,
+            'first_word' => $first_word,
+            'date' => $product->product_date,
+            'rank' => $rank,
+            'has_stock' => $delivery_data['has_stock'],
+            'delivery_rank' => $delivery_data['delivery_rank'],
+        );
+
+        echo '<tr>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . $product_id . '</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . esc_html(substr($product->product_title, 0, 40)) . '...</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . esc_html($brand) . '</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;"><strong>' . esc_html($first_word) . '</strong></td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . ($delivery_data['has_stock'] ? '✓' : '✗') . '</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . $delivery_data['delivery_rank'] . '</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . date('Y-m-d', strtotime($product->product_date)) . '</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;"><code>' . implode(',', $rank) . '</code></td>';
+        echo '</tr>';
+    }
+    echo '</table>';
+
+    echo '<p style="margin-top: 10px;"><strong>Rank Format:</strong> [has_stock, delivery_rank, -timestamp, product_id]<br>';
+    echo '<small>Lower values = higher priority. Stock: 0=in stock, 1=out of stock. Delivery: 1=fastest, 4=slowest.</small></p>';
+
+    echo '</div>';
     wp_die();
 });
 
