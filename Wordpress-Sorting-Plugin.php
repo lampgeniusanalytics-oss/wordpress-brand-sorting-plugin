@@ -252,10 +252,10 @@ function alternate_brands_for_category($category_id) {
         return "Category $category_id: Only one brand found, skipping.";
     }
 
-    // Sort products within each first-word group by rank, considering stock percentage
-    foreach ($brand_groups as $brand => $first_word_groups) {
-        $sorted_groups = array();
+    // Collect all ranges from all brands with their metadata
+    $all_ranges = array();
 
+    foreach ($brand_groups as $brand => $first_word_groups) {
         foreach ($first_word_groups as $first_word => $product_ids) {
             // Calculate stock percentage for this range (first-word group)
             $total_products = count($product_ids);
@@ -283,36 +283,37 @@ function alternate_brands_for_category($category_id) {
             // Keep products together in the range - sort by product ID for consistency
             sort($product_ids);
 
-            $sorted_groups[] = array(
+            $all_ranges[] = array(
+                'brand' => $brand,
+                'first_word' => $first_word,
                 'products' => $product_ids,
                 'is_mostly_out_of_stock' => $is_mostly_out_of_stock,
                 'best_delivery_rank' => $best_delivery_rank,
                 'best_rank' => $best_rank,
             );
         }
-
-        // Sort groups by:
-        // 1. Stock threshold (groups with >60% out of stock go to back)
-        // 2. Best value score in the group (delivery + price combined)
-        usort($sorted_groups, function($a, $b) {
-            // First, prioritize groups that are NOT mostly out of stock
-            if ($a['is_mostly_out_of_stock'] != $b['is_mostly_out_of_stock']) {
-                return $a['is_mostly_out_of_stock'] <=> $b['is_mostly_out_of_stock'];
-            }
-            // Then sort by best rank (value score)
-            return $a['best_rank'] <=> $b['best_rank'];
-        });
-
-        $brand_grouped_lists[$brand] = $sorted_groups;
     }
 
-    // Rank brands by their best value score (from their best range)
-    $brand_keys = array_keys($brand_grouped_lists);
-    usort($brand_keys, function($a, $b) use ($brand_grouped_lists) {
-        $best_rank_a = $brand_grouped_lists[$a][0]['best_rank'];
-        $best_rank_b = $brand_grouped_lists[$b][0]['best_rank'];
-        return $best_rank_a <=> $best_rank_b;
+    // Sort ALL ranges globally by value score
+    // 1. Stock threshold (groups with >60% out of stock go to back)
+    // 2. Best value score in the group (delivery + price combined)
+    usort($all_ranges, function($a, $b) {
+        // First, prioritize groups that are NOT mostly out of stock
+        if ($a['is_mostly_out_of_stock'] != $b['is_mostly_out_of_stock']) {
+            return $a['is_mostly_out_of_stock'] <=> $b['is_mostly_out_of_stock'];
+        }
+        // Then sort by best rank (value score)
+        return $a['best_rank'] <=> $b['best_rank'];
     });
+
+    // Group sorted ranges by brand for alternation
+    $brand_grouped_lists = array();
+    foreach ($all_ranges as $range) {
+        $brand_grouped_lists[$range['brand']][] = $range;
+    }
+
+    // Get brand keys in the order they should appear (by their best range)
+    $brand_keys = array_keys($brand_grouped_lists);
 
     $sorted_products = array();
     $position = 0;
