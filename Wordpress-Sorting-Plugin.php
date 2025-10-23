@@ -56,6 +56,16 @@ function calculate_delivery_rank($product_id) {
     // Special case: If ONLY warehouse 3115 has stock (14-21 days), push it way back
     // These slow-delivery products should rank very low regardless of price
     $debug_msg = "Product $product_id: count=" . count($warehouses_with_stock) . ", warehouses=" . implode(',', $warehouses_with_stock) . ", rank_before=$best_delivery_rank";
+
+    // Debug: Check exact value and type
+    if (count($warehouses_with_stock) === 1) {
+        $wh_value = $warehouses_with_stock[0];
+        $wh_type = gettype($wh_value);
+        error_log("DEBUG: wh_value='$wh_value' type=$wh_type, comparing to '3115'");
+        error_log("DEBUG: strict compare (===): " . ($wh_value === '3115' ? 'TRUE' : 'FALSE'));
+        error_log("DEBUG: loose compare (==): " . ($wh_value == '3115' ? 'TRUE' : 'FALSE'));
+    }
+
     if (count($warehouses_with_stock) === 1 && $warehouses_with_stock[0] === '3115') {
         $best_delivery_rank = 50; // High penalty, but less than out-of-stock (999)
         error_log($debug_msg . " -> APPLIED 3115-ONLY PENALTY -> rank_after=$best_delivery_rank");
