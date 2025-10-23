@@ -26,6 +26,7 @@ function get_product_stock_data($product_id) {
  * Returns array with 'has_stock', 'delivery_rank', 'has_3113_stock'
  */
 function calculate_delivery_rank($product_id) {
+    error_log("=== NEW CODE RUNNING === calculate_delivery_rank for product $product_id");
     $stock_data = get_product_stock_data($product_id);
 
     // Warehouse priority (lower number = faster delivery)
