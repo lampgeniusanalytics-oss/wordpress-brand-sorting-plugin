@@ -735,22 +735,22 @@ add_action('wp_ajax_debug_algorithm', function() {
         return $a['rank'] <=> $b['rank'];
     });
 
-    echo '<h4>Step 1: Product Data with Rankings (Top 20 by Rank)</h4>';
-    echo '<table style="border-collapse: collapse; font-size: 11px;">';
+    echo '<h4>Step 1: Product Data with Rankings (Top 80 by Rank)</h4>';
+    echo '<table style="border-collapse: collapse; font-size: 10px;">';
     echo '<tr style="background: #f1f1f1;">
-        <th style="padding: 5px; border: 1px solid #ddd;">ID</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Title</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Brand</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">First Word (Range)</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Stock?</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Delivery Rank</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Warehouse Stock</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Final Rank</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">ID</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Title</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Brand</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">First Word (Range)</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Stock?</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Delivery Rank</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Warehouse Stock</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Final Rank</th>
     </tr>';
 
     $count = 0;
     foreach ($product_data as $product_id => $data) {
-        if ($count >= 20) break;
+        if ($count >= 80) break;
 
         // Format warehouse stock display
         $warehouse_display = sprintf('3113:%d | 3114:%d | 3211:%d | 3115:%d',
@@ -760,15 +760,18 @@ add_action('wp_ajax_debug_algorithm', function() {
             $data['stock_data']['3115']
         );
 
-        echo '<tr>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . $product_id . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . esc_html(substr($data['title'], 0, 30)) . '...</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . esc_html($data['brand']) . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;"><strong>' . esc_html($data['first_word']) . '</strong></td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . ($data['has_stock'] ? '✓' : '✗') . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;"><strong>' . $data['delivery_rank'] . '</strong></td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd; font-size: 9px;">' . $warehouse_display . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;"><code>' . implode(',', $data['rank']) . '</code></td>';
+        // Highlight Tica products
+        $highlight = (stripos($data['title'], 'tica') !== false) ? 'background: #ffffcc;' : '';
+
+        echo '<tr style="' . $highlight . '">';
+        echo '<td style="padding: 3px; border: 1px solid #ddd;">' . $product_id . '</td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 9px;">' . esc_html(substr($data['title'], 0, 25)) . '...</td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 9px;">' . esc_html($data['brand']) . '</td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd;"><strong>' . esc_html($data['first_word']) . '</strong></td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; text-align: center;">' . ($data['has_stock'] ? '✓' : '✗') . '</td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; text-align: center;"><strong>' . $data['delivery_rank'] . '</strong></td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 8px;">' . $warehouse_display . '</td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd;"><code style="font-size: 9px;">' . implode(',', $data['rank']) . '</code></td>';
         echo '</tr>';
         $count++;
     }
