@@ -40,15 +40,23 @@ function calculate_delivery_rank($product_id) {
     $has_stock = false;
     $best_delivery_rank = 999; // Default for out of stock
     $has_3113_stock = false;
+    $warehouses_with_stock = array();
 
     foreach ($stock_data as $warehouse => $stock) {
         if ($stock > 0) {
             $has_stock = true;
+            $warehouses_with_stock[] = $warehouse;
             if ($warehouse === '3113') {
                 $has_3113_stock = true;
             }
             $best_delivery_rank = min($best_delivery_rank, $warehouse_ranks[$warehouse]);
         }
+    }
+
+    // Special case: If ONLY warehouse 3115 has stock (14-21 days), push it way back
+    // These slow-delivery products should rank very low regardless of price
+    if (count($warehouses_with_stock) === 1 && $warehouses_with_stock[0] === '3115') {
+        $best_delivery_rank = 50; // High penalty, but less than out-of-stock (999)
     }
 
     return array(
@@ -827,7 +835,7 @@ add_action('wp_ajax_debug_algorithm', function() {
 
     echo '<p style="margin-top: 10px;"><strong>Value Score = Delivery Rank + Price Penalty</strong> (Lower = Better)<br>';
     echo '<small><strong>Price Tiers:</strong> £0-69: +10 (no profit) | <span style="background: #d4edda; padding: 2px;">£70-149: -2 (BEST)</span> | £150-200: +0 | £201-300: +5 | £301+: +15</small><br>';
-    echo '<small><strong>Delivery:</strong> -100=Next Day (3113) PRIORITY | 2=3-4 days | 3=8-10 days | 4=14-21 days | 999=out of stock</small><br>';
+    echo '<small><strong>Delivery:</strong> -100=Next Day (3113) PRIORITY | 2=3-4 days (3114) | 3=8-10 days (3211) | 4=14-21 days (3115) | 50=ONLY at 3115 (pushed back) | 999=out of stock</small><br>';
     echo '<small><strong>Color coding:</strong> <span style="background: #d4edda; padding: 2px;">Green = Best profit (£70-149)</span> | <span style="background: #f8d7da; padding: 2px;">Red = No profit (&lt;£70)</span></small></p>';
 
     // Step 2: Show actual brand-alternated sort order
