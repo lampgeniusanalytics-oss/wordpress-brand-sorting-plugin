@@ -67,7 +67,7 @@ function calculate_delivery_rank($product_id) {
         error_log("DEBUG: loose compare (==): " . ($wh_value == '3115' ? 'TRUE' : 'FALSE'));
     }
 
-    if (count($warehouses_with_stock) === 1 && $warehouses_with_stock[0] === '3115') {
+    if (count($warehouses_with_stock) === 1 && $warehouses_with_stock[0] == 3115) {
         $best_delivery_rank = 50; // High penalty, but less than out-of-stock (999)
         error_log($debug_msg . " -> APPLIED 3115-ONLY PENALTY -> rank_after=$best_delivery_rank");
     } else {
