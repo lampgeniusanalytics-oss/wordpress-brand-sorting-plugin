@@ -53,19 +53,61 @@ function calculate_delivery_rank($product_id) {
 }
 
 /**
+ * Get product price
+ * Returns float price value
+ */
+function get_product_price($product_id) {
+    $product = wc_get_product($product_id);
+    if (!$product) {
+        return 0;
+    }
+    return floatval($product->get_price());
+}
+
+/**
+ * Calculate price tier penalty for value score
+ * Lower penalty = better (prioritized)
+ *
+ * Price Tiers:
+ * £0-79:     +10 (no profit - pushed back)
+ * £80-149:   +0  (good profit - neutral)
+ * £150-200:  -2  (best profit - boosted forward)
+ * £201-300:  +1  (high price - slight penalty)
+ * £301+:     +3  (very expensive - penalty)
+ */
+function calculate_price_tier_penalty($price) {
+    if ($price < 80) {
+        return 10; // No profit - push back
+    } elseif ($price < 150) {
+        return 0; // Good profit - neutral
+    } elseif ($price <= 200) {
+        return -2; // Best profit margin - boost forward
+    } elseif ($price <= 300) {
+        return 1; // High price - slight penalty
+    } else {
+        return 3; // Very expensive - penalty
+    }
+}
+
+/**
  * Calculate a sortable rank array for a product
  * Lower values = higher priority
- * Returns array suitable for sorting: [delivery_rank, product_id]
+ * Returns array suitable for sorting: [value_score, product_id]
+ *
+ * Value Score = delivery_rank + price_tier_penalty
+ * This prioritizes profitable items (£80-200) with fast delivery
  */
 function calculate_product_rank($product_id) {
     $delivery_data = calculate_delivery_rank($product_id);
+    $price = get_product_price($product_id);
+    $price_penalty = calculate_price_tier_penalty($price);
 
-    // Convert to sortable format:
-    // 1. Delivery rank (1-4 for in-stock, 999 for out of stock) - FASTEST FIRST
-    // 2. Product ID (for stable sort)
+    // Value score: delivery rank + price penalty
+    // Lower score = better (appears first)
+    $value_score = $delivery_data['delivery_rank'] + $price_penalty;
 
     return array(
-        $delivery_data['delivery_rank'],
+        $value_score,
         $product_id,
     );
 }
@@ -187,11 +229,16 @@ function alternate_brands_for_category($category_id) {
 
         // Store product metadata for later ranking
         $delivery_data = calculate_delivery_rank($product_id);
+        $price = get_product_price($product_id);
+        $price_penalty = calculate_price_tier_penalty($price);
+
         $product_data[$product_id] = array(
             'title' => $product_title,
             'rank' => calculate_product_rank($product_id),
             'has_stock' => $delivery_data['has_stock'],
             'delivery_rank' => $delivery_data['delivery_rank'],
+            'price' => $price,
+            'price_penalty' => $price_penalty,
         );
 
         $brands = wp_get_post_terms($product_id, 'pa_brand');
@@ -717,6 +764,8 @@ add_action('wp_ajax_debug_algorithm', function() {
 
         $stock_data = get_product_stock_data($product_id);
         $delivery_data = calculate_delivery_rank($product_id);
+        $price = get_product_price($product_id);
+        $price_penalty = calculate_price_tier_penalty($price);
         $rank = calculate_product_rank($product_id);
 
         $product_data[$product_id] = array(
@@ -727,6 +776,8 @@ add_action('wp_ajax_debug_algorithm', function() {
             'has_stock' => $delivery_data['has_stock'],
             'delivery_rank' => $delivery_data['delivery_rank'],
             'stock_data' => $stock_data,
+            'price' => $price,
+            'price_penalty' => $price_penalty,
         );
     }
 
@@ -735,17 +786,17 @@ add_action('wp_ajax_debug_algorithm', function() {
         return $a['rank'] <=> $b['rank'];
     });
 
-    echo '<h4>Step 1: Product Data with Rankings (Top 80 by Rank)</h4>';
-    echo '<table style="border-collapse: collapse; font-size: 10px;">';
+    echo '<h4>Step 1: Product Data with Rankings (Top 80 by Value Score)</h4>';
+    echo '<table style="border-collapse: collapse; font-size: 9px;">';
     echo '<tr style="background: #f1f1f1;">
-        <th style="padding: 4px; border: 1px solid #ddd;">ID</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Title</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Brand</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">First Word (Range)</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Stock?</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Delivery Rank</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Warehouse Stock</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Final Rank</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">ID</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Title</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Brand</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Price</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Price Penalty</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Delivery</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Value Score</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Warehouse Stock</th>
     </tr>';
 
     $count = 0;
@@ -760,26 +811,37 @@ add_action('wp_ajax_debug_algorithm', function() {
             $data['stock_data']['3115']
         );
 
-        // Highlight Tica products
-        $highlight = (stripos($data['title'], 'tica') !== false) ? 'background: #ffffcc;' : '';
+        // Highlight products based on price tier
+        $price = $data['price'];
+        if ($price >= 150 && $price <= 200) {
+            $highlight = 'background: #d4edda;'; // Green for best profit margin
+        } elseif ($price < 80) {
+            $highlight = 'background: #f8d7da;'; // Red for no profit
+        } else {
+            $highlight = '';
+        }
+
+        // Calculate value score
+        $value_score = $data['delivery_rank'] + $data['price_penalty'];
 
         echo '<tr style="' . $highlight . '">';
-        echo '<td style="padding: 3px; border: 1px solid #ddd;">' . $product_id . '</td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 9px;">' . esc_html(substr($data['title'], 0, 25)) . '...</td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 9px;">' . esc_html($data['brand']) . '</td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd;"><strong>' . esc_html($data['first_word']) . '</strong></td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; text-align: center;">' . ($data['has_stock'] ? '✓' : '✗') . '</td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; text-align: center;"><strong>' . $data['delivery_rank'] . '</strong></td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 8px;">' . $warehouse_display . '</td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd;"><code style="font-size: 9px;">' . implode(',', $data['rank']) . '</code></td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; font-size: 8px;">' . $product_id . '</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; font-size: 8px;">' . esc_html(substr($data['title'], 0, 20)) . '...</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; font-size: 8px;">' . esc_html($data['brand']) . '</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; text-align: right;"><strong>£' . number_format($price, 0) . '</strong></td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; text-align: center;">' . $data['price_penalty'] . '</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; text-align: center;">' . $data['delivery_rank'] . '</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; text-align: center;"><strong>' . $value_score . '</strong></td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; font-size: 7px;">' . $warehouse_display . '</td>';
         echo '</tr>';
         $count++;
     }
     echo '</table>';
 
-    echo '<p style="margin-top: 10px;"><strong>Rank Format:</strong> [delivery_rank, product_id]<br>';
-    echo '<small>Lower values = higher priority. <strong>Delivery: 1=fastest (1-2 days), 4=slowest (14-21 days), 999=out of stock.</strong></small><br>';
-    echo '<small><strong>Range Deprioritization:</strong> If a range (first-word group) has >60% out of stock, the entire range is pushed back.</small></p>';
+    echo '<p style="margin-top: 10px;"><strong>Value Score = Delivery Rank + Price Penalty</strong> (Lower = Better)<br>';
+    echo '<small><strong>Price Tiers:</strong> £0-79: +10 (no profit) | £80-149: +0 | <span style="background: #d4edda; padding: 2px;">£150-200: -2 (BEST)</span> | £201-300: +1 | £301+: +3</small><br>';
+    echo '<small><strong>Delivery:</strong> 1=1-2 days | 2=3-4 days | 3=8-10 days | 4=14-21 days | 999=out of stock</small><br>';
+    echo '<small><strong>Color coding:</strong> <span style="background: #d4edda; padding: 2px;">Green = Best profit (£150-200)</span> | <span style="background: #f8d7da; padding: 2px;">Red = No profit (&lt;£80)</span></small></p>';
 
     // Step 2: Show actual brand-alternated sort order
     echo '<h4 style="margin-top: 30px;">Step 2: Brand-Alternated Sort Order (First 80 Products)</h4>';
@@ -865,14 +927,16 @@ add_action('wp_ajax_debug_algorithm', function() {
     }
 
     // Display the brand-alternated order
-    echo '<table style="border-collapse: collapse; font-size: 10px;">';
+    echo '<table style="border-collapse: collapse; font-size: 9px;">';
     echo '<tr style="background: #f1f1f1;">
-        <th style="padding: 4px; border: 1px solid #ddd;">Position</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">ID</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Title</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Brand</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Delivery Rank</th>
-        <th style="padding: 4px; border: 1px solid #ddd;">Warehouse Stock</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Pos</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">ID</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Title</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Brand</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Price</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Delivery</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Value Score</th>
+        <th style="padding: 3px; border: 1px solid #ddd;">Warehouse Stock</th>
     </tr>';
 
     $displayed = 0;
@@ -887,16 +951,28 @@ add_action('wp_ajax_debug_algorithm', function() {
             $data['stock_data']['3115']
         );
 
-        // Highlight Tica products
-        $highlight = (stripos($data['title'], 'tica') !== false) ? 'background: #ffffcc;' : '';
+        // Highlight products based on price tier
+        $price = $data['price'];
+        if ($price >= 150 && $price <= 200) {
+            $highlight = 'background: #d4edda;'; // Green for best profit margin
+        } elseif ($price < 80) {
+            $highlight = 'background: #f8d7da;'; // Red for no profit
+        } else {
+            $highlight = '';
+        }
+
+        // Calculate value score
+        $value_score = $data['delivery_rank'] + $data['price_penalty'];
 
         echo '<tr style="' . $highlight . '">';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; text-align: center;"><strong>' . ($pos + 1) . '</strong></td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd;">' . $product_id . '</td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 9px;">' . esc_html(substr($data['title'], 0, 30)) . '...</td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 9px;">' . esc_html($data['brand']) . '</td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; text-align: center;"><strong>' . $data['delivery_rank'] . '</strong></td>';
-        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 8px;">' . $warehouse_display . '</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; text-align: center;"><strong>' . ($pos + 1) . '</strong></td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; font-size: 8px;">' . $product_id . '</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; font-size: 8px;">' . esc_html(substr($data['title'], 0, 25)) . '...</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; font-size: 8px;">' . esc_html($data['brand']) . '</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; text-align: right;"><strong>£' . number_format($price, 0) . '</strong></td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; text-align: center;">' . $data['delivery_rank'] . '</td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; text-align: center;"><strong>' . $value_score . '</strong></td>';
+        echo '<td style="padding: 2px; border: 1px solid #ddd; font-size: 7px;">' . $warehouse_display . '</td>';
         echo '</tr>';
         $displayed++;
     }
