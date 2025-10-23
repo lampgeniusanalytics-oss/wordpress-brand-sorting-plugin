@@ -336,6 +336,12 @@ function alternate_brands_page() {
         <div id="sort-order-viewer" style="margin-top:20px;"></div>
 
         <hr>
+        <h2>🔍 Diagnostic Tool - Check Meta Values</h2>
+        <p>This will show you the actual meta values in the database for the selected category.</p>
+        <button class="button button-secondary" id="run-diagnostic">Run Diagnostic</button>
+        <div id="diagnostic-viewer" style="margin-top:20px;"></div>
+
+        <hr>
         <h2>Global Apply (Async)</h2>
         <p>This will process all categories, skipping excluded ones, without overloading the server.</p>
         <button class="button button-secondary" id="start-global-update">Run in Background</button>
@@ -356,6 +362,22 @@ function alternate_brands_page() {
             })
             .catch(() => {
                 viewerBox.innerHTML = '<p>Error loading sort order.</p>';
+            });
+    });
+
+    // Diagnostic handler
+    document.getElementById('run-diagnostic').addEventListener('click', function() {
+        const categoryId = document.getElementById('category-selector').value;
+        const viewerBox = document.getElementById('diagnostic-viewer');
+        viewerBox.innerHTML = '<p>Running diagnostic...</p>';
+
+        fetch(ajaxurl + '?action=run_diagnostic&category_id=' + categoryId)
+            .then(response => response.text())
+            .then(html => {
+                viewerBox.innerHTML = html;
+            })
+            .catch(() => {
+                viewerBox.innerHTML = '<p>Error running diagnostic.</p>';
             });
     });
 
@@ -433,6 +455,122 @@ add_action('wp_ajax_process_single_category', function() {
 
     $message = alternate_brands_for_category($category_id);
     echo esc_html($message);
+    wp_die();
+});
+
+add_action('wp_ajax_run_diagnostic', function() {
+    if (!current_user_can('manage_woocommerce')) {
+        wp_die('Unauthorized', '', array('response' => 403));
+    }
+
+    $category_id = isset($_GET['category_id']) ? intval($_GET['category_id']) : 0;
+    if (!$category_id) {
+        echo '<p>Invalid category ID.</p>';
+        wp_die();
+    }
+
+    global $wpdb;
+
+    // Get category info
+    $term = get_term($category_id, 'product_cat');
+    $meta_key = 'rwpp_sortorder_' . $category_id;
+
+    echo '<div style="background: #fff; padding: 20px; border: 1px solid #ccc;">';
+    echo '<h3>Diagnostic Results for Category: ' . esc_html($term->name) . ' (ID: ' . $category_id . ')</h3>';
+
+    // Check RWPP settings
+    echo '<h4>1. RWPP Settings Check</h4>';
+    $rwpp_setting = get_option('rwpp_effected_loops');
+    echo '<p>RWPP "Enable sorting for all product loops": <strong>' . ($rwpp_setting ? '✓ ENABLED' : '✗ DISABLED') . '</strong></p>';
+
+    // Check WooCommerce default sorting
+    $wc_default_sorting = get_option('woocommerce_default_catalog_orderby');
+    echo '<p>WooCommerce Default Sorting: <strong>' . esc_html($wc_default_sorting) . '</strong></p>';
+    if ($wc_default_sorting !== 'menu_order') {
+        echo '<p style="color: orange;">⚠️ Note: WooCommerce sorting should be set to "menu_order" or "Default sorting (custom ordering + name)"</p>';
+    }
+
+    // Get products with meta values
+    echo '<h4>2. Database Check - Products with Meta Values</h4>';
+
+    $query = $wpdb->prepare("
+        SELECT p.ID, p.post_title, pm.meta_value, pm.meta_key
+        FROM {$wpdb->posts} p
+        JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
+        JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+        LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = %s
+        WHERE p.post_type = 'product'
+        AND p.post_status = 'publish'
+        AND tt.term_id = %d
+        ORDER BY CAST(pm.meta_value AS UNSIGNED) ASC
+        LIMIT 10
+    ", $meta_key, $category_id);
+
+    $products = $wpdb->get_results($query);
+
+    if (empty($products)) {
+        echo '<p style="color: red;">❌ No products found in this category!</p>';
+    } else {
+        echo '<p>Found ' . count($products) . ' products (showing first 10):</p>';
+        echo '<table style="border-collapse: collapse; width: 100%;">';
+        echo '<tr style="background: #f1f1f1;">
+                <th style="padding: 8px; border: 1px solid #ddd;">Product ID</th>
+                <th style="padding: 8px; border: 1px solid #ddd;">Title</th>
+                <th style="padding: 8px; border: 1px solid #ddd;">Meta Key</th>
+                <th style="padding: 8px; border: 1px solid #ddd;">Meta Value</th>
+                <th style="padding: 8px; border: 1px solid #ddd;">Status</th>
+              </tr>';
+
+        $has_values = 0;
+        foreach ($products as $product) {
+            $status = '';
+            if ($product->meta_value !== null && $product->meta_value !== '') {
+                $status = '✓ Has Value';
+                $has_values++;
+            } else {
+                $status = '✗ No Value';
+            }
+
+            echo '<tr>';
+            echo '<td style="padding: 8px; border: 1px solid #ddd;">' . $product->ID . '</td>';
+            echo '<td style="padding: 8px; border: 1px solid #ddd;">' . esc_html($product->post_title) . '</td>';
+            echo '<td style="padding: 8px; border: 1px solid #ddd;"><code>' . esc_html($meta_key) . '</code></td>';
+            echo '<td style="padding: 8px; border: 1px solid #ddd;">' . esc_html($product->meta_value) . '</td>';
+            echo '<td style="padding: 8px; border: 1px solid #ddd;">' . $status . '</td>';
+            echo '</tr>';
+        }
+        echo '</table>';
+
+        if ($has_values === 0) {
+            echo '<p style="color: red; font-weight: bold;">❌ PROBLEM FOUND: No products have meta values! You need to run "Apply Brand Alternation" first.</p>';
+        } else {
+            echo '<p style="color: green;">✓ ' . $has_values . ' products have sort order meta values.</p>';
+        }
+    }
+
+    // Check what RWPP would see
+    echo '<h4>3. What RWPP Would Query</h4>';
+    echo '<p>RWPP looks for meta key: <code>' . esc_html($meta_key) . '</code></p>';
+    echo '<p>RWPP sorts by: <code>meta_value_num menu_order title ASC</code></p>';
+
+    // Show category URL
+    $cat_link = get_term_link($term);
+    echo '<h4>4. Frontend URL to Test</h4>';
+    echo '<p>Visit this URL on the frontend to see if sorting works:<br>';
+    echo '<a href="' . esc_url($cat_link) . '" target="_blank">' . esc_url($cat_link) . '</a></p>';
+
+    echo '<h4>5. Next Steps</h4>';
+    if ($has_values > 0) {
+        echo '<ol>';
+        echo '<li>Open the category URL above in an <strong>incognito/private window</strong></li>';
+        echo '<li>Clear all caches (WordPress, page cache, CDN, browser)</li>';
+        echo '<li>Check if products appear in the order shown in the table above</li>';
+        echo '</ol>';
+    } else {
+        echo '<p style="color: orange;">⚠️ Run "Apply Brand Alternation" on this category first, then run this diagnostic again.</p>';
+    }
+
+    echo '</div>';
     wp_die();
 });
 
