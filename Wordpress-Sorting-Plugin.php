@@ -1,3 +1,4 @@
+<?php
 /**
  * Plugin extension: Alternate products by brand, with first-word grouping
  * Now supports global async updates with a progress log.
