@@ -23,25 +23,30 @@ function get_product_stock_data($product_id) {
 /**
  * Calculate delivery rank for a product based on warehouse stock
  * Lower rank = faster delivery
- * Returns array with 'has_stock', 'delivery_rank'
+ * Returns array with 'has_stock', 'delivery_rank', 'has_3113_stock'
  */
 function calculate_delivery_rank($product_id) {
     $stock_data = get_product_stock_data($product_id);
 
     // Warehouse priority (lower number = faster delivery)
+    // 3113 gets -100 to ensure it ALWAYS appears at the top (next day delivery)
     $warehouse_ranks = array(
-        '3113' => 1, // 1-2 Working Days
-        '3114' => 2, // 3-4 Working Days
-        '3211' => 3, // 8-10 Working Days
-        '3115' => 4, // 14-21 Working Days
+        '3113' => -100, // Next Day - PRIORITY WAREHOUSE
+        '3114' => 2,    // 3-4 Working Days
+        '3211' => 3,    // 8-10 Working Days
+        '3115' => 4,    // 14-21 Working Days
     );
 
     $has_stock = false;
     $best_delivery_rank = 999; // Default for out of stock
+    $has_3113_stock = false;
 
     foreach ($stock_data as $warehouse => $stock) {
         if ($stock > 0) {
             $has_stock = true;
+            if ($warehouse === '3113') {
+                $has_3113_stock = true;
+            }
             $best_delivery_rank = min($best_delivery_rank, $warehouse_ranks[$warehouse]);
         }
     }
@@ -49,6 +54,7 @@ function calculate_delivery_rank($product_id) {
     return array(
         'has_stock' => $has_stock,
         'delivery_rank' => $best_delivery_rank,
+        'has_3113_stock' => $has_3113_stock,
     );
 }
 
@@ -70,8 +76,8 @@ function get_product_price($product_id) {
  *
  * Price Tiers:
  * £0-69:     +10 (no profit - pushed back)
- * £70-149:   +0  (good profit - neutral)
- * £150-200:  -2  (best profit - boosted forward)
+ * £70-149:   -2  (best profit - boosted forward)
+ * £150-200:  +0  (good profit - neutral)
  * £201-300:  +5  (high price - strong penalty)
  * £301+:     +15 (very expensive - heavy penalty)
  */
@@ -79,9 +85,9 @@ function calculate_price_tier_penalty($price) {
     if ($price < 70) {
         return 10; // No profit - push back
     } elseif ($price < 150) {
-        return 0; // Good profit - neutral
-    } elseif ($price <= 200) {
         return -2; // Best profit margin - boost forward
+    } elseif ($price <= 200) {
+        return 0; // Good profit - neutral
     } elseif ($price <= 300) {
         return 5; // High price - strong penalty
     } else {
@@ -677,7 +683,7 @@ function alternate_brands_page() {
 // === AJAX HANDLERS ===
 
 add_action('wp_ajax_prepare_global_queue', function() {
-    $excluded = array(2239, 176, 177, 175);
+    $excluded = array(2257, 2239, 176, 177, 175);
     $categories = get_terms(array(
         'taxonomy' => 'product_cat',
         'hide_empty' => false,
@@ -794,7 +800,7 @@ add_action('wp_ajax_debug_algorithm', function() {
 
         // Highlight products based on price tier
         $price = $data['price'];
-        if ($price >= 150 && $price <= 200) {
+        if ($price >= 70 && $price < 150) {
             $highlight = 'background: #d4edda;'; // Green for best profit margin
         } elseif ($price < 70) {
             $highlight = 'background: #f8d7da;'; // Red for no profit
@@ -820,100 +826,61 @@ add_action('wp_ajax_debug_algorithm', function() {
     echo '</table>';
 
     echo '<p style="margin-top: 10px;"><strong>Value Score = Delivery Rank + Price Penalty</strong> (Lower = Better)<br>';
-    echo '<small><strong>Price Tiers:</strong> £0-69: +10 (no profit) | £70-149: +0 | <span style="background: #d4edda; padding: 2px;">£150-200: -2 (BEST)</span> | £201-300: +5 | £301+: +15</small><br>';
-    echo '<small><strong>Delivery:</strong> 1=1-2 days | 2=3-4 days | 3=8-10 days | 4=14-21 days | 999=out of stock</small><br>';
-    echo '<small><strong>Color coding:</strong> <span style="background: #d4edda; padding: 2px;">Green = Best profit (£150-200)</span> | <span style="background: #f8d7da; padding: 2px;">Red = No profit (&lt;£70)</span></small></p>';
+    echo '<small><strong>Price Tiers:</strong> £0-69: +10 (no profit) | <span style="background: #d4edda; padding: 2px;">£70-149: -2 (BEST)</span> | £150-200: +0 | £201-300: +5 | £301+: +15</small><br>';
+    echo '<small><strong>Delivery:</strong> -100=Next Day (3113) PRIORITY | 2=3-4 days | 3=8-10 days | 4=14-21 days | 999=out of stock</small><br>';
+    echo '<small><strong>Color coding:</strong> <span style="background: #d4edda; padding: 2px;">Green = Best profit (£70-149)</span> | <span style="background: #f8d7da; padding: 2px;">Red = No profit (&lt;£70)</span></small></p>';
 
     // Step 2: Show actual brand-alternated sort order
     echo '<h4 style="margin-top: 30px;">Step 2: Soft Brand-Alternated Sort Order (First 80 Products)</h4>';
-    echo '<p><small>Ranges sorted globally by value score. Brands alternate when possible (looks ahead 3 positions for different brand), but doesn\'t force it. Expensive ranges (score 17+) pushed to end.</small></p>';
+    echo '<p><small>Products sorted individually by value score (no range grouping). Brands alternate when possible (looks ahead 3 positions for different brand). Products with 3113 stock dominate the top.</small></p>';
 
-    // Group products by brand and first word
-    $brand_groups = array();
-    foreach ($products as $product) {
-        $product_id = $product->product_id;
-        $brands = wp_get_post_terms($product_id, 'pa_brand');
-        $brand = !empty($brands) ? $brands[0]->name : 'no-brand';
-        $first_word = strtolower(trim(strtok($product->product_title, ' ')));
-        $brand_groups[$brand][$first_word][] = $product_id;
+    // Collect all products individually (no first-word grouping) - same as main algorithm
+    $all_products = array();
+
+    foreach ($product_data as $product_id => $data) {
+        $all_products[] = array(
+            'product_id' => $product_id,
+            'brand' => $data['brand'],
+            'rank' => $data['rank'],
+            'has_stock' => $data['has_stock'],
+        );
     }
 
-    // Collect all ranges from all brands with their metadata (same as main algorithm)
-    $all_ranges = array();
-
-    foreach ($brand_groups as $brand => $first_word_groups) {
-        foreach ($first_word_groups as $first_word => $product_ids) {
-            // Calculate stock percentage for this range
-            $total_products = count($product_ids);
-            $out_of_stock_count = 0;
-
-            foreach ($product_ids as $pid) {
-                if (!$product_data[$pid]['has_stock']) {
-                    $out_of_stock_count++;
-                }
-            }
-
-            $out_of_stock_percentage = ($out_of_stock_count / $total_products) * 100;
-            $is_mostly_out_of_stock = $out_of_stock_percentage > 60;
-
-            // Find the best rank in this group
-            $best_rank = null;
-            $best_delivery_rank = 999;
-            foreach ($product_ids as $pid) {
-                if ($best_rank === null || $product_data[$pid]['rank'] < $best_rank) {
-                    $best_rank = $product_data[$pid]['rank'];
-                    $best_delivery_rank = $product_data[$pid]['delivery_rank'];
-                }
-            }
-
-            // Keep products together in the range - sort by product ID
-            sort($product_ids);
-
-            $all_ranges[] = array(
-                'brand' => $brand,
-                'first_word' => $first_word,
-                'products' => $product_ids,
-                'is_mostly_out_of_stock' => $is_mostly_out_of_stock,
-                'best_delivery_rank' => $best_delivery_rank,
-                'best_rank' => $best_rank,
-            );
+    // Sort ALL products individually by value score - same as main algorithm
+    usort($all_products, function($a, $b) {
+        // First, prioritize products that have stock
+        if ($a['has_stock'] != $b['has_stock']) {
+            return $b['has_stock'] <=> $a['has_stock'];
         }
-    }
-
-    // Sort ALL ranges globally by value score (same as main algorithm)
-    usort($all_ranges, function($a, $b) {
-        if ($a['is_mostly_out_of_stock'] != $b['is_mostly_out_of_stock']) {
-            return $a['is_mostly_out_of_stock'] <=> $b['is_mostly_out_of_stock'];
-        }
-        return $a['best_rank'] <=> $b['best_rank'];
+        // Then sort by value score
+        return $a['rank'] <=> $b['rank'];
     });
 
-    // Apply soft brand alternation (same as main algorithm)
+    // Apply soft brand alternation to individual products - same as main algorithm
     $sorted_products = array();
     $position = 0;
     $last_brand = null;
 
-    while (!empty($all_ranges)) {
+    while (!empty($all_products)) {
         $selected_index = 0;
 
-        // Try to find a range from a different brand within the next few options
+        // Try to find a product from a different brand within the next few options
         if ($last_brand !== null) {
-            for ($i = 0; $i < min(3, count($all_ranges)); $i++) {
-                if ($all_ranges[$i]['brand'] !== $last_brand) {
+            // Look ahead up to 3 positions to find a different brand
+            for ($i = 0; $i < min(3, count($all_products)); $i++) {
+                if ($all_products[$i]['brand'] !== $last_brand) {
                     $selected_index = $i;
                     break;
                 }
             }
         }
 
-        // Take the selected range
-        $range = array_splice($all_ranges, $selected_index, 1)[0];
-        $last_brand = $range['brand'];
+        // Take the selected product
+        $product = array_splice($all_products, $selected_index, 1)[0];
+        $last_brand = $product['brand'];
 
-        // Add all products from this range
-        foreach ($range['products'] as $product_id) {
-            $sorted_products[$position++] = $product_id;
-        }
+        // Add this product to sorted list
+        $sorted_products[$position++] = $product['product_id'];
     }
 
     // Display the brand-alternated order
@@ -943,7 +910,7 @@ add_action('wp_ajax_debug_algorithm', function() {
 
         // Highlight products based on price tier
         $price = $data['price'];
-        if ($price >= 150 && $price <= 200) {
+        if ($price >= 70 && $price < 150) {
             $highlight = 'background: #d4edda;'; // Green for best profit margin
         } elseif ($price < 70) {
             $highlight = 'background: #f8d7da;'; // Red for no profit
