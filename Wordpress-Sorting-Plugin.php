@@ -55,20 +55,20 @@ function calculate_delivery_rank($product_id) {
 /**
  * Calculate a sortable rank array for a product
  * Lower values = higher priority
- * Returns array suitable for sorting: [has_stock, delivery_rank, -timestamp, product_id]
+ * Returns array suitable for sorting: [delivery_rank, has_stock, -timestamp, product_id]
  */
 function calculate_product_rank($product_id, $product_date) {
     $delivery_data = calculate_delivery_rank($product_id);
 
     // Convert to sortable format:
-    // 1. Stock availability (0 = has stock, 1 = no stock)
-    // 2. Delivery rank (1-4 for in-stock, 999 for out of stock)
+    // 1. Delivery rank (1-4 for in-stock, 999 for out of stock) - FASTEST FIRST
+    // 2. Stock availability (0 = has stock, 1 = no stock)
     // 3. Negative timestamp (newer = higher priority, so we negate for sorting)
     // 4. Product ID (for stable sort)
 
     return array(
-        $delivery_data['has_stock'] ? 0 : 1,
         $delivery_data['delivery_rank'],
+        $delivery_data['has_stock'] ? 0 : 1,
         -strtotime($product_date),
         $product_id,
     );
@@ -168,7 +168,7 @@ function alternate_brands_for_category($category_id) {
     global $wpdb;
 
     $products_query = $wpdb->prepare("
-        SELECT p.ID as product_id, p.post_title as product_title, p.post_date as product_date
+        SELECT p.ID as product_id, p.post_title as product_title, p.post_modified as product_date
         FROM {$wpdb->posts} p
         JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'product_cat'
@@ -676,7 +676,7 @@ add_action('wp_ajax_debug_algorithm', function() {
 
     // Get products
     $products_query = $wpdb->prepare("
-        SELECT p.ID as product_id, p.post_title as product_title, p.post_date as product_date
+        SELECT p.ID as product_id, p.post_title as product_title, p.post_modified as product_date
         FROM {$wpdb->posts} p
         JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'product_cat'
@@ -696,7 +696,7 @@ add_action('wp_ajax_debug_algorithm', function() {
         <th style="padding: 5px; border: 1px solid #ddd;">First Word</th>
         <th style="padding: 5px; border: 1px solid #ddd;">Stock?</th>
         <th style="padding: 5px; border: 1px solid #ddd;">Delivery Rank</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Published Date</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Modified Date</th>
         <th style="padding: 5px; border: 1px solid #ddd;">Final Rank</th>
     </tr>';
 
@@ -733,8 +733,8 @@ add_action('wp_ajax_debug_algorithm', function() {
     }
     echo '</table>';
 
-    echo '<p style="margin-top: 10px;"><strong>Rank Format:</strong> [has_stock, delivery_rank, -timestamp, product_id]<br>';
-    echo '<small>Lower values = higher priority. Stock: 0=in stock, 1=out of stock. Delivery: 1=fastest, 4=slowest.</small></p>';
+    echo '<p style="margin-top: 10px;"><strong>Rank Format:</strong> [delivery_rank, has_stock, -timestamp, product_id]<br>';
+    echo '<small>Lower values = higher priority. <strong>Delivery: 1=fastest (1-2 days), 4=slowest (14-21 days).</strong> Stock: 0=in stock, 1=out of stock. Date: Uses post_modified (last publish/update date).</small></p>';
 
     echo '</div>';
     wp_die();
