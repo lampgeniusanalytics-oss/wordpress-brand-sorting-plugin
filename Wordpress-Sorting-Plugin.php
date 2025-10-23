@@ -97,12 +97,71 @@ add_action('pre_get_posts', function($query) {
         // Log to PHP error log (visible in debug.log if WP_DEBUG is enabled)
         error_log('=== RWPP Frontend Query Debug ===');
         error_log('Category: ' . $term->name . ' (ID: ' . $term->term_id . ')');
+        error_log('URL Parameters: ' . print_r($_GET, true));
         error_log('Orderby: ' . print_r($orderby, true));
         error_log('Order: ' . $order);
         error_log('Meta Query: ' . print_r($meta_query, true));
         error_log('Expected Meta Key: rwpp_sortorder_' . $term->term_id);
+        error_log('Is Main Query: ' . ($query->is_main_query() ? 'YES' : 'NO'));
+        error_log('Post Type: ' . print_r($query->get('post_type'), true));
     }
 }, 1000); // High priority to run after RWPP
+
+// === FORCE RWPP COMPATIBILITY ===
+/**
+ * Ensure WooCommerce queries on category pages use our sort order
+ * This hooks at priority 9999 to override any theme/plugin interference
+ */
+add_action('pre_get_posts', function($query) {
+    // Only on frontend main query for product categories
+    if (is_admin() || !$query->is_main_query()) {
+        return;
+    }
+
+    // Only on product category pages
+    if (!is_tax('product_cat')) {
+        return;
+    }
+
+    // Don't override if user explicitly selected a different sorting
+    if (isset($_GET['orderby']) && $_GET['orderby'] !== 'menu_order') {
+        return;
+    }
+
+    $term = get_queried_object();
+    if ($term && is_a($term, 'WP_Term')) {
+        $term_id = $term->term_id;
+        $meta_key = 'rwpp_sortorder_' . $term_id;
+
+        // Check if any products have our meta key
+        global $wpdb;
+        $has_sorting = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = %s LIMIT 1",
+            $meta_key
+        ));
+
+        if ($has_sorting > 0) {
+            // Force our sorting
+            $meta_query = array(
+                'relation' => 'OR',
+                array(
+                    'key'     => $meta_key,
+                    'compare' => 'EXISTS',
+                ),
+                array(
+                    'key'     => $meta_key,
+                    'compare' => 'NOT EXISTS',
+                ),
+            );
+
+            $query->set('meta_query', $meta_query);
+            $query->set('orderby', 'meta_value_num menu_order title');
+            $query->set('order', 'ASC');
+
+            error_log('🚀 FORCED SORT ORDER for category ' . $term_id . ' (meta_key: ' . $meta_key . ')');
+        }
+    }
+}, 9999); // Very high priority to override everything
 
 // === CORE FUNCTION ===
 function alternate_brands_for_category($category_id) {
