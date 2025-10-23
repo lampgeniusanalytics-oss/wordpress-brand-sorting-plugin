@@ -55,8 +55,12 @@ function calculate_delivery_rank($product_id) {
 
     // Special case: If ONLY warehouse 3115 has stock (14-21 days), push it way back
     // These slow-delivery products should rank very low regardless of price
+    $debug_msg = "Product $product_id: count=" . count($warehouses_with_stock) . ", warehouses=" . implode(',', $warehouses_with_stock) . ", rank_before=$best_delivery_rank";
     if (count($warehouses_with_stock) === 1 && $warehouses_with_stock[0] === '3115') {
         $best_delivery_rank = 50; // High penalty, but less than out-of-stock (999)
+        error_log($debug_msg . " -> APPLIED 3115-ONLY PENALTY -> rank_after=$best_delivery_rank");
+    } else {
+        error_log($debug_msg . " -> NO PENALTY");
     }
 
     return array(
