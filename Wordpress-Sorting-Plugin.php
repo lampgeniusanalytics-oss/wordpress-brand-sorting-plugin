@@ -98,11 +98,13 @@ function get_product_price($product_id) {
  * Lower penalty = better (prioritized)
  *
  * Price Tiers:
- * £0-69:     +10 (no profit - pushed back)
- * £70-149:   -2  (best profit - boosted forward)
- * £150-200:  +0  (good profit - neutral)
- * £201-300:  +5  (high price - strong penalty)
- * £301+:     +15 (very expensive - heavy penalty)
+ * £0-69:      +10 (no profit - pushed back)
+ * £70-149:    -2  (best profit - boosted forward)
+ * £150-200:   +0  (good profit - neutral)
+ * £201-300:   +5  (high price - strong penalty)
+ * £301-500:   +15 (very expensive - heavy penalty)
+ * £501-1000:  +25 (extremely expensive - very heavy penalty)
+ * £1001+:     +40 (ultra expensive - maximum penalty)
  */
 function calculate_price_tier_penalty($price) {
     if ($price < 70) {
@@ -113,8 +115,12 @@ function calculate_price_tier_penalty($price) {
         return 0; // Good profit - neutral
     } elseif ($price <= 300) {
         return 5; // High price - strong penalty
-    } else {
+    } elseif ($price <= 500) {
         return 15; // Very expensive - heavy penalty
+    } elseif ($price <= 1000) {
+        return 25; // Extremely expensive - very heavy penalty
+    } else {
+        return 40; // Ultra expensive - maximum penalty
     }
 }
 
@@ -849,7 +855,7 @@ add_action('wp_ajax_debug_algorithm', function() {
     echo '</table>';
 
     echo '<p style="margin-top: 10px;"><strong>Value Score = Delivery Rank + Price Penalty</strong> (Lower = Better)<br>';
-    echo '<small><strong>Price Tiers:</strong> £0-69: +10 (no profit) | <span style="background: #d4edda; padding: 2px;">£70-149: -2 (BEST)</span> | £150-200: +0 | £201-300: +5 | £301+: +15</small><br>';
+    echo '<small><strong>Price Tiers:</strong> £0-69: +10 (no profit) | <span style="background: #d4edda; padding: 2px;">£70-149: -2 (BEST)</span> | £150-200: +0 | £201-300: +5 | £301-500: +15 | £501-1000: +25 | £1001+: +40</small><br>';
     echo '<small><strong>Delivery:</strong> -100=Next Day (3113) PRIORITY | 2=3-4 days (3114) | 3=8-10 days (3211) | 4=14-21 days (3115) | 50=ONLY at 3115 (pushed back) | 999=out of stock</small><br>';
     echo '<small><strong>Color coding:</strong> <span style="background: #d4edda; padding: 2px;">Green = Best profit (£70-149)</span> | <span style="background: #f8d7da; padding: 2px;">Red = No profit (&lt;£70)</span></small></p>';
 
