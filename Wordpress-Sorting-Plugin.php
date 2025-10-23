@@ -181,7 +181,20 @@ function alternate_brands_for_category($category_id) {
         $updated++;
     }
 
-    return "Updated $updated products in category ID $category_id.";
+    // Clear any RWPP caches
+    delete_transient('rwpp_sortorder_cache_' . $category_id);
+
+    // Clear WooCommerce product query cache
+    wp_cache_delete('product_cat_' . $category_id, 'terms');
+    if (function_exists('wc_delete_product_transients')) {
+        wc_delete_product_transients();
+    }
+
+    // Get category name for better messaging
+    $term = get_term($category_id, 'product_cat');
+    $cat_name = $term ? $term->name : "ID $category_id";
+
+    return "✓ Updated $updated products in category '$cat_name' (ID: $category_id). Meta key: {$meta_key}";
 }
 
 /**
@@ -223,7 +236,20 @@ function reverse_category_sorting($category_id) {
         }
     }
 
-    return "Reversed sorting for $swapped products in category ID $category_id.";
+    // Clear any RWPP caches
+    delete_transient('rwpp_sortorder_cache_' . $category_id);
+
+    // Clear WooCommerce product query cache
+    wp_cache_delete('product_cat_' . $category_id, 'terms');
+    if (function_exists('wc_delete_product_transients')) {
+        wc_delete_product_transients();
+    }
+
+    // Get category name for better messaging
+    $term = get_term($category_id, 'product_cat');
+    $cat_name = $term ? $term->name : "ID $category_id";
+
+    return "✓ Reversed sorting for $swapped products in category '$cat_name' (ID: $category_id).";
 }
 
 // === ADMIN PAGE + AJAX SETUP ===
@@ -246,6 +272,17 @@ function alternate_brands_page() {
     ?>
     <div class="wrap">
         <h1>Alternate Products by Brand</h1>
+
+        <div class="notice notice-info">
+            <p><strong>Important Setup Requirements:</strong></p>
+            <ul style="list-style: disc; margin-left: 20px;">
+                <li>This plugin requires the <strong>Rearrange WooCommerce Products Plugin (RWPP)</strong> to display the sort order on the front-end.</li>
+                <li>RWPP must be configured to use <strong>custom sort order</strong> for product categories.</li>
+                <li>After running the sort, check the "View Sort Order" section below to verify meta keys are saved.</li>
+                <li>The meta key format is: <code>rwpp_sortorder_{category_id}</code></li>
+                <li>If changes don't appear, try clearing your site cache and RWPP cache.</li>
+            </ul>
+        </div>
 
         <form method="post" id="manual-category-form">
             <h2>Manual Single Category</h2>
@@ -419,11 +456,17 @@ add_action('wp_ajax_view_sort_order', function() {
             $sort_order = 999999; // Put unsorted products at the end
         }
 
+        // Get brand info for debugging
+        $brands = wp_get_post_terms($product_id, 'pa_brand');
+        $brand_name = !empty($brands) ? $brands[0]->name : 'No Brand';
+
         $sorted_products[] = array(
             'id' => $product_id,
             'title' => $product->product_title,
             'sort_order' => intval($sort_order),
             'thumbnail' => get_the_post_thumbnail_url($product_id, 'thumbnail'),
+            'brand' => $brand_name,
+            'meta_value' => $sort_order, // Raw meta value
         );
     }
 
@@ -441,8 +484,9 @@ add_action('wp_ajax_view_sort_order', function() {
         .sort-order-table tr:nth-child(even) { background-color: #f9f9f9; }
     </style>';
 
+    echo '<p><strong>Debug Info:</strong> Meta key used: <code>' . esc_html($meta_key) . '</code></p>';
     echo '<table class="sort-order-table">';
-    echo '<thead><tr><th>Position</th><th>Image</th><th>Product Title</th><th>Product ID</th></tr></thead>';
+    echo '<thead><tr><th>Position</th><th>Image</th><th>Product Title</th><th>Brand</th><th>Product ID</th><th>Meta Value</th></tr></thead>';
     echo '<tbody>';
 
     foreach ($sorted_products as $index => $product) {
@@ -453,7 +497,9 @@ add_action('wp_ajax_view_sort_order', function() {
         echo '<td>' . $position . '</td>';
         echo '<td>' . $thumbnail . '</td>';
         echo '<td>' . esc_html($product['title']) . '</td>';
+        echo '<td>' . esc_html($product['brand']) . '</td>';
         echo '<td>' . $product['id'] . '</td>';
+        echo '<td>' . esc_html($product['meta_value']) . '</td>';
         echo '</tr>';
     }
 
