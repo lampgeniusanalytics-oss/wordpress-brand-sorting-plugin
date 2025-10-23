@@ -74,6 +74,36 @@ function calculate_product_rank($product_id, $product_date) {
     );
 }
 
+// === FRONTEND QUERY LOGGER (for debugging) ===
+/**
+ * Temporarily enable this to see what's happening on the frontend
+ * Logs query modifications to help diagnose sorting issues
+ */
+add_action('pre_get_posts', function($query) {
+    // Only log on frontend product category pages
+    if (is_admin() || !$query->is_main_query()) {
+        return;
+    }
+
+    // Check if this is a product category page
+    if (is_tax('product_cat')) {
+        $term = get_queried_object();
+
+        // Get query vars
+        $meta_query = $query->get('meta_query');
+        $orderby = $query->get('orderby');
+        $order = $query->get('order');
+
+        // Log to PHP error log (visible in debug.log if WP_DEBUG is enabled)
+        error_log('=== RWPP Frontend Query Debug ===');
+        error_log('Category: ' . $term->name . ' (ID: ' . $term->term_id . ')');
+        error_log('Orderby: ' . print_r($orderby, true));
+        error_log('Order: ' . $order);
+        error_log('Meta Query: ' . print_r($meta_query, true));
+        error_log('Expected Meta Key: rwpp_sortorder_' . $term->term_id);
+    }
+}, 1000); // High priority to run after RWPP
+
 // === CORE FUNCTION ===
 function alternate_brands_for_category($category_id) {
     global $wpdb;
@@ -569,6 +599,32 @@ add_action('wp_ajax_run_diagnostic', function() {
     } else {
         echo '<p style="color: orange;">⚠️ Run "Apply Brand Alternation" on this category first, then run this diagnostic again.</p>';
     }
+
+    // Final recommendation
+    echo '<h4>⚡ Troubleshooting Recommendations</h4>';
+    echo '<div style="background: #fffbcc; padding: 15px; border-left: 4px solid #ffeb3b;">';
+    echo '<p><strong>Your meta values are saved correctly!</strong> If sorting still doesn\'t work on the frontend:</p>';
+    echo '<ol>';
+    echo '<li><strong>Clear ALL caches:</strong>
+        <ul>
+            <li>WordPress object cache (if using Redis/Memcached)</li>
+            <li>Page cache plugin (WP Rocket, W3 Total Cache, etc.)</li>
+            <li>CDN cache (Cloudflare, etc.)</li>
+            <li>Browser cache (use Ctrl+Shift+R or incognito mode)</li>
+        </ul>
+    </li>';
+    echo '<li><strong>Check for conflicts:</strong> Temporarily switch to a default WordPress theme (Twenty Twenty-Four) to rule out theme interference.</li>';
+    echo '<li><strong>Check query parameters:</strong> Make sure you\'re not using <code>?orderby=date</code> or other sorting in the URL.</li>';
+    echo '<li><strong>Enable WP Debug:</strong> Add this to wp-config.php (before "That\'s all, stop editing!"):<br>
+        <code>define(\'WP_DEBUG\', true);<br>define(\'WP_DEBUG_LOG\', true);</code><br>
+        Then visit the category page on the frontend. Check <code>/wp-content/debug.log</code> for errors.<br>
+        Look for lines starting with "=== RWPP Frontend Query Debug ===" to see what query is being used.
+    </li>';
+    echo '<li><strong>Verify RWPP is active:</strong> Go to Plugins and make sure "Rearrange Woocommerce Products" shows as active.</li>';
+    echo '<li><strong>Check theme compatibility:</strong> Some themes override WooCommerce queries. Try switching to Storefront or Twenty Twenty-Four theme temporarily.</li>';
+    echo '</ol>';
+    echo '<p style="margin-top: 15px;"><strong>💡 Tip:</strong> This plugin includes a query logger. After enabling WP_DEBUG above, visit your category page and check debug.log. You should see the orderby and meta_query values.</p>';
+    echo '</div>';
 
     echo '</div>';
     wp_die();
