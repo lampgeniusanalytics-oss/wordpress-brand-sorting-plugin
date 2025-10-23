@@ -55,21 +55,17 @@ function calculate_delivery_rank($product_id) {
 /**
  * Calculate a sortable rank array for a product
  * Lower values = higher priority
- * Returns array suitable for sorting: [delivery_rank, has_stock, -timestamp, product_id]
+ * Returns array suitable for sorting: [delivery_rank, product_id]
  */
-function calculate_product_rank($product_id, $product_date) {
+function calculate_product_rank($product_id) {
     $delivery_data = calculate_delivery_rank($product_id);
 
     // Convert to sortable format:
     // 1. Delivery rank (1-4 for in-stock, 999 for out of stock) - FASTEST FIRST
-    // 2. Stock availability (0 = has stock, 1 = no stock)
-    // 3. Negative timestamp (newer = higher priority, so we negate for sorting)
-    // 4. Product ID (for stable sort)
+    // 2. Product ID (for stable sort)
 
     return array(
         $delivery_data['delivery_rank'],
-        $delivery_data['has_stock'] ? 0 : 1,
-        -strtotime($product_date),
         $product_id,
     );
 }
@@ -188,13 +184,14 @@ function alternate_brands_for_category($category_id) {
     foreach ($products as $product) {
         $product_id = $product->product_id;
         $product_title = $product->product_title;
-        $product_date = $product->product_date;
 
         // Store product metadata for later ranking
+        $delivery_data = calculate_delivery_rank($product_id);
         $product_data[$product_id] = array(
             'title' => $product_title,
-            'date' => $product_date,
-            'rank' => calculate_product_rank($product_id, $product_date),
+            'rank' => calculate_product_rank($product_id),
+            'has_stock' => $delivery_data['has_stock'],
+            'delivery_rank' => $delivery_data['delivery_rank'],
         );
 
         $brands = wp_get_post_terms($product_id, 'pa_brand');
@@ -208,22 +205,46 @@ function alternate_brands_for_category($category_id) {
         return "Category $category_id: Only one brand found, skipping.";
     }
 
-    // Sort products within each first-word group by rank
+    // Sort products within each first-word group by rank, considering stock percentage
     foreach ($brand_groups as $brand => $first_word_groups) {
         $sorted_groups = array();
 
         foreach ($first_word_groups as $first_word => $product_ids) {
+            // Calculate stock percentage for this range (first-word group)
+            $total_products = count($product_ids);
+            $out_of_stock_count = 0;
+
+            foreach ($product_ids as $pid) {
+                if (!$product_data[$pid]['has_stock']) {
+                    $out_of_stock_count++;
+                }
+            }
+
+            $out_of_stock_percentage = ($out_of_stock_count / $total_products) * 100;
+            $is_mostly_out_of_stock = $out_of_stock_percentage > 60;
+
             // Sort products in this group by their rank
             usort($product_ids, function($a, $b) use ($product_data) {
                 return $product_data[$a]['rank'] <=> $product_data[$b]['rank'];
             });
 
-            $sorted_groups[] = $product_ids;
+            $sorted_groups[] = array(
+                'products' => $product_ids,
+                'is_mostly_out_of_stock' => $is_mostly_out_of_stock,
+                'best_delivery_rank' => $product_data[$product_ids[0]]['delivery_rank'],
+            );
         }
 
-        // Sort groups by the rank of their best (first) product
-        usort($sorted_groups, function($a, $b) use ($product_data) {
-            return $product_data[$a[0]]['rank'] <=> $product_data[$b[0]]['rank'];
+        // Sort groups by:
+        // 1. Stock threshold (groups with >60% out of stock go to back)
+        // 2. Best delivery rank in the group
+        usort($sorted_groups, function($a, $b) {
+            // First, prioritize groups that are NOT mostly out of stock
+            if ($a['is_mostly_out_of_stock'] != $b['is_mostly_out_of_stock']) {
+                return $a['is_mostly_out_of_stock'] <=> $b['is_mostly_out_of_stock'];
+            }
+            // Then sort by best delivery rank
+            return $a['best_delivery_rank'] <=> $b['best_delivery_rank'];
         });
 
         $brand_grouped_lists[$brand] = $sorted_groups;
@@ -232,8 +253,8 @@ function alternate_brands_for_category($category_id) {
     // Rank brands by their best product (first product in first group)
     $brand_keys = array_keys($brand_grouped_lists);
     usort($brand_keys, function($a, $b) use ($brand_grouped_lists, $product_data) {
-        $best_product_a = $brand_grouped_lists[$a][0][0];
-        $best_product_b = $brand_grouped_lists[$b][0][0];
+        $best_product_a = $brand_grouped_lists[$a][0]['products'][0];
+        $best_product_b = $brand_grouped_lists[$b][0]['products'][0];
         return $product_data[$best_product_a]['rank'] <=> $product_data[$best_product_b]['rank'];
     });
 
@@ -246,7 +267,7 @@ function alternate_brands_for_category($category_id) {
         foreach ($brand_keys as $brand) {
             if (!empty($brand_grouped_lists[$brand])) {
                 $group = array_shift($brand_grouped_lists[$brand]);
-                foreach ($group as $product_id) {
+                foreach ($group['products'] as $product_id) {
                     $sorted_products[$position++] = $product_id;
                 }
                 $still_going = true;
@@ -674,7 +695,7 @@ add_action('wp_ajax_debug_algorithm', function() {
     echo '<div style="background: #fff; padding: 20px; border: 1px solid #ccc; max-width: 100%; overflow-x: auto;">';
     echo '<h3>🔬 Algorithm Debug - Step by Step</h3>';
 
-    // Get products
+    // Get ALL products to properly rank them (no LIMIT)
     $products_query = $wpdb->prepare("
         SELECT p.ID as product_id, p.post_title as product_title, p.post_modified as product_date
         FROM {$wpdb->posts} p
@@ -682,24 +703,11 @@ add_action('wp_ajax_debug_algorithm', function() {
         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'product_cat'
         WHERE p.post_type = 'product' AND p.post_status = 'publish'
         AND tt.term_id = %d
-        LIMIT 20
     ", $category_id);
 
     $products = $wpdb->get_results($products_query);
 
-    echo '<h4>Step 1: Product Data with Rankings</h4>';
-    echo '<table style="border-collapse: collapse; font-size: 11px;">';
-    echo '<tr style="background: #f1f1f1;">
-        <th style="padding: 5px; border: 1px solid #ddd;">ID</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Title</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Brand</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">First Word</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Stock?</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Delivery Rank</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Modified Date</th>
-        <th style="padding: 5px; border: 1px solid #ddd;">Final Rank</th>
-    </tr>';
-
+    // Calculate rank for all products
     $product_data = array();
     foreach ($products as $product) {
         $product_id = $product->product_id;
@@ -707,34 +715,68 @@ add_action('wp_ajax_debug_algorithm', function() {
         $brand = !empty($brands) ? $brands[0]->name : 'no-brand';
         $first_word = strtolower(trim(strtok($product->product_title, ' ')));
 
+        $stock_data = get_product_stock_data($product_id);
         $delivery_data = calculate_delivery_rank($product_id);
-        $rank = calculate_product_rank($product_id, $product->product_date);
+        $rank = calculate_product_rank($product_id);
 
         $product_data[$product_id] = array(
             'title' => $product->product_title,
             'brand' => $brand,
             'first_word' => $first_word,
-            'date' => $product->product_date,
             'rank' => $rank,
             'has_stock' => $delivery_data['has_stock'],
             'delivery_rank' => $delivery_data['delivery_rank'],
+            'stock_data' => $stock_data,
+        );
+    }
+
+    // Sort products by rank to show best ranking first
+    uasort($product_data, function($a, $b) {
+        return $a['rank'] <=> $b['rank'];
+    });
+
+    echo '<h4>Step 1: Product Data with Rankings (Top 20 by Rank)</h4>';
+    echo '<table style="border-collapse: collapse; font-size: 11px;">';
+    echo '<tr style="background: #f1f1f1;">
+        <th style="padding: 5px; border: 1px solid #ddd;">ID</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Title</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Brand</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">First Word (Range)</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Stock?</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Delivery Rank</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Warehouse Stock</th>
+        <th style="padding: 5px; border: 1px solid #ddd;">Final Rank</th>
+    </tr>';
+
+    $count = 0;
+    foreach ($product_data as $product_id => $data) {
+        if ($count >= 20) break;
+
+        // Format warehouse stock display
+        $warehouse_display = sprintf('3113:%d | 3114:%d | 3211:%d | 3115:%d',
+            $data['stock_data']['3113'],
+            $data['stock_data']['3114'],
+            $data['stock_data']['3211'],
+            $data['stock_data']['3115']
         );
 
         echo '<tr>';
         echo '<td style="padding: 5px; border: 1px solid #ddd;">' . $product_id . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . esc_html(substr($product->product_title, 0, 40)) . '...</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . esc_html($brand) . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;"><strong>' . esc_html($first_word) . '</strong></td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . ($delivery_data['has_stock'] ? '✓' : '✗') . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . $delivery_data['delivery_rank'] . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . date('Y-m-d', strtotime($product->product_date)) . '</td>';
-        echo '<td style="padding: 5px; border: 1px solid #ddd;"><code>' . implode(',', $rank) . '</code></td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . esc_html(substr($data['title'], 0, 30)) . '...</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . esc_html($data['brand']) . '</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;"><strong>' . esc_html($data['first_word']) . '</strong></td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;">' . ($data['has_stock'] ? '✓' : '✗') . '</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;"><strong>' . $data['delivery_rank'] . '</strong></td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd; font-size: 9px;">' . $warehouse_display . '</td>';
+        echo '<td style="padding: 5px; border: 1px solid #ddd;"><code>' . implode(',', $data['rank']) . '</code></td>';
         echo '</tr>';
+        $count++;
     }
     echo '</table>';
 
-    echo '<p style="margin-top: 10px;"><strong>Rank Format:</strong> [delivery_rank, has_stock, -timestamp, product_id]<br>';
-    echo '<small>Lower values = higher priority. <strong>Delivery: 1=fastest (1-2 days), 4=slowest (14-21 days).</strong> Stock: 0=in stock, 1=out of stock. Date: Uses post_modified (last publish/update date).</small></p>';
+    echo '<p style="margin-top: 10px;"><strong>Rank Format:</strong> [delivery_rank, product_id]<br>';
+    echo '<small>Lower values = higher priority. <strong>Delivery: 1=fastest (1-2 days), 4=slowest (14-21 days), 999=out of stock.</strong></small><br>';
+    echo '<small><strong>Range Deprioritization:</strong> If a range (first-word group) has >60% out of stock, the entire range is pushed back.</small></p>';
 
     echo '</div>';
     wp_die();
