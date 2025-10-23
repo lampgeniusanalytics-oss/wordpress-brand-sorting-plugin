@@ -274,15 +274,37 @@ function alternate_brands_page() {
         <h1>Alternate Products by Brand</h1>
 
         <div class="notice notice-info">
-            <p><strong>Important Setup Requirements:</strong></p>
-            <ul style="list-style: disc; margin-left: 20px;">
-                <li>This plugin requires the <strong>Rearrange WooCommerce Products Plugin (RWPP)</strong> to display the sort order on the front-end.</li>
-                <li>RWPP must be configured to use <strong>custom sort order</strong> for product categories.</li>
-                <li>After running the sort, check the "View Sort Order" section below to verify meta keys are saved.</li>
-                <li>The meta key format is: <code>rwpp_sortorder_{category_id}</code></li>
-                <li>If changes don't appear, try clearing your site cache and RWPP cache.</li>
-            </ul>
+            <p><strong>Setup Checklist - Please verify all items:</strong></p>
+            <ol style="list-style: decimal; margin-left: 30px; line-height: 1.8;">
+                <li>✓ RWPP plugin is active (you should see "Rearrange Products" in your admin menu)</li>
+                <li>✓ Go to <strong>Rearrange Products → Settings</strong> and check the <strong>"Enable sorting for all product loops"</strong> checkbox
+                    <br><small style="color: #666;">This enables sorting on category pages. Without this, sorting only works on the main shop page.</small>
+                </li>
+                <li>✓ After running the sort below, click <strong>"View Sort Order"</strong> to verify meta values are saved
+                    <br><small style="color: #666;">You should see numbers 0, 1, 2, 3... in the "Meta Value" column.</small>
+                </li>
+                <li>✓ Visit the category page on your <strong>frontend</strong> (not admin) in an incognito/private window
+                    <br><small style="color: #666;">Example: yoursite.com/product-category/ceiling-lights/</small>
+                </li>
+                <li>✓ Clear all caches: WordPress cache, page cache, CDN cache, browser cache</li>
+            </ol>
+            <p><strong>Meta Key Format:</strong> <code>rwpp_sortorder_{category_id}</code> - This is compatible with RWPP.</p>
         </div>
+
+        <?php
+        $rwpp_setting = get_option('rwpp_effected_loops');
+        if (!$rwpp_setting) {
+            echo '<div class="notice notice-warning">
+                <p><strong>⚠️ RWPP Setting Not Enabled!</strong></p>
+                <p>The "Enable sorting for all product loops" setting is currently <strong>disabled</strong> in RWPP.</p>
+                <p>👉 <a href="' . admin_url('admin.php?page=rwpp-settings-page') . '" class="button button-primary">Go to RWPP Settings</a> and enable it, then test again.</p>
+            </div>';
+        } else {
+            echo '<div class="notice notice-success">
+                <p><strong>✓ RWPP Setting Enabled</strong> - Sorting should work on category pages.</p>
+            </div>';
+        }
+        ?>
 
         <form method="post" id="manual-category-form">
             <h2>Manual Single Category</h2>
