@@ -781,6 +781,127 @@ add_action('wp_ajax_debug_algorithm', function() {
     echo '<small>Lower values = higher priority. <strong>Delivery: 1=fastest (1-2 days), 4=slowest (14-21 days), 999=out of stock.</strong></small><br>';
     echo '<small><strong>Range Deprioritization:</strong> If a range (first-word group) has >60% out of stock, the entire range is pushed back.</small></p>';
 
+    // Step 2: Show actual brand-alternated sort order
+    echo '<h4 style="margin-top: 30px;">Step 2: Brand-Alternated Sort Order (First 80 Products)</h4>';
+    echo '<p><small>This shows the actual sort order after applying brand alternation and range deprioritization.</small></p>';
+
+    // Group products by brand and first word
+    $brand_groups = array();
+    foreach ($products as $product) {
+        $product_id = $product->product_id;
+        $brands = wp_get_post_terms($product_id, 'pa_brand');
+        $brand = !empty($brands) ? $brands[0]->name : 'no-brand';
+        $first_word = strtolower(trim(strtok($product->product_title, ' ')));
+        $brand_groups[$brand][$first_word][] = $product_id;
+    }
+
+    // Sort products within each first-word group by rank, considering stock percentage
+    $brand_grouped_lists = array();
+    foreach ($brand_groups as $brand => $first_word_groups) {
+        $sorted_groups = array();
+
+        foreach ($first_word_groups as $first_word => $product_ids) {
+            // Calculate stock percentage for this range
+            $total_products = count($product_ids);
+            $out_of_stock_count = 0;
+
+            foreach ($product_ids as $pid) {
+                if (!$product_data[$pid]['has_stock']) {
+                    $out_of_stock_count++;
+                }
+            }
+
+            $out_of_stock_percentage = ($out_of_stock_count / $total_products) * 100;
+            $is_mostly_out_of_stock = $out_of_stock_percentage > 60;
+
+            // Sort products in this group by their rank
+            usort($product_ids, function($a, $b) use ($product_data) {
+                return $product_data[$a]['rank'] <=> $product_data[$b]['rank'];
+            });
+
+            $sorted_groups[] = array(
+                'products' => $product_ids,
+                'is_mostly_out_of_stock' => $is_mostly_out_of_stock,
+                'best_delivery_rank' => $product_data[$product_ids[0]]['delivery_rank'],
+                'first_word' => $first_word,
+            );
+        }
+
+        // Sort groups by stock threshold and delivery rank
+        usort($sorted_groups, function($a, $b) {
+            if ($a['is_mostly_out_of_stock'] != $b['is_mostly_out_of_stock']) {
+                return $a['is_mostly_out_of_stock'] <=> $b['is_mostly_out_of_stock'];
+            }
+            return $a['best_delivery_rank'] <=> $b['best_delivery_rank'];
+        });
+
+        $brand_grouped_lists[$brand] = $sorted_groups;
+    }
+
+    // Rank brands by their best product
+    $brand_keys = array_keys($brand_grouped_lists);
+    usort($brand_keys, function($a, $b) use ($brand_grouped_lists, $product_data) {
+        $best_product_a = $brand_grouped_lists[$a][0]['products'][0];
+        $best_product_b = $brand_grouped_lists[$b][0]['products'][0];
+        return $product_data[$best_product_a]['rank'] <=> $product_data[$best_product_b]['rank'];
+    });
+
+    // Round-robin alternation
+    $sorted_products = array();
+    $position = 0;
+    $still_going = true;
+
+    while ($still_going) {
+        $still_going = false;
+        foreach ($brand_keys as $brand) {
+            if (!empty($brand_grouped_lists[$brand])) {
+                $group = array_shift($brand_grouped_lists[$brand]);
+                foreach ($group['products'] as $product_id) {
+                    $sorted_products[$position++] = $product_id;
+                }
+                $still_going = true;
+            }
+        }
+    }
+
+    // Display the brand-alternated order
+    echo '<table style="border-collapse: collapse; font-size: 10px;">';
+    echo '<tr style="background: #f1f1f1;">
+        <th style="padding: 4px; border: 1px solid #ddd;">Position</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">ID</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Title</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Brand</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Delivery Rank</th>
+        <th style="padding: 4px; border: 1px solid #ddd;">Warehouse Stock</th>
+    </tr>';
+
+    $displayed = 0;
+    foreach ($sorted_products as $pos => $product_id) {
+        if ($displayed >= 80) break;
+
+        $data = $product_data[$product_id];
+        $warehouse_display = sprintf('3113:%d | 3114:%d | 3211:%d | 3115:%d',
+            $data['stock_data']['3113'],
+            $data['stock_data']['3114'],
+            $data['stock_data']['3211'],
+            $data['stock_data']['3115']
+        );
+
+        // Highlight Tica products
+        $highlight = (stripos($data['title'], 'tica') !== false) ? 'background: #ffffcc;' : '';
+
+        echo '<tr style="' . $highlight . '">';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; text-align: center;"><strong>' . ($pos + 1) . '</strong></td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd;">' . $product_id . '</td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 9px;">' . esc_html(substr($data['title'], 0, 30)) . '...</td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 9px;">' . esc_html($data['brand']) . '</td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; text-align: center;"><strong>' . $data['delivery_rank'] . '</strong></td>';
+        echo '<td style="padding: 3px; border: 1px solid #ddd; font-size: 8px;">' . $warehouse_display . '</td>';
+        echo '</tr>';
+        $displayed++;
+    }
+    echo '</table>';
+
     echo '</div>';
     wp_die();
 });
