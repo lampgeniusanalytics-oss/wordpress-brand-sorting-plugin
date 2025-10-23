@@ -69,23 +69,23 @@ function get_product_price($product_id) {
  * Lower penalty = better (prioritized)
  *
  * Price Tiers:
- * £0-79:     +10 (no profit - pushed back)
- * £80-149:   +0  (good profit - neutral)
+ * £0-69:     +10 (no profit - pushed back)
+ * £70-149:   +0  (good profit - neutral)
  * £150-200:  -2  (best profit - boosted forward)
- * £201-300:  +1  (high price - slight penalty)
- * £301+:     +3  (very expensive - penalty)
+ * £201-300:  +5  (high price - strong penalty)
+ * £301+:     +15 (very expensive - heavy penalty)
  */
 function calculate_price_tier_penalty($price) {
-    if ($price < 80) {
+    if ($price < 70) {
         return 10; // No profit - push back
     } elseif ($price < 150) {
         return 0; // Good profit - neutral
     } elseif ($price <= 200) {
         return -2; // Best profit margin - boost forward
     } elseif ($price <= 300) {
-        return 1; // High price - slight penalty
+        return 5; // High price - strong penalty
     } else {
-        return 3; // Very expensive - penalty
+        return 15; // Very expensive - heavy penalty
     }
 }
 
@@ -815,7 +815,7 @@ add_action('wp_ajax_debug_algorithm', function() {
         $price = $data['price'];
         if ($price >= 150 && $price <= 200) {
             $highlight = 'background: #d4edda;'; // Green for best profit margin
-        } elseif ($price < 80) {
+        } elseif ($price < 70) {
             $highlight = 'background: #f8d7da;'; // Red for no profit
         } else {
             $highlight = '';
@@ -839,9 +839,9 @@ add_action('wp_ajax_debug_algorithm', function() {
     echo '</table>';
 
     echo '<p style="margin-top: 10px;"><strong>Value Score = Delivery Rank + Price Penalty</strong> (Lower = Better)<br>';
-    echo '<small><strong>Price Tiers:</strong> £0-79: +10 (no profit) | £80-149: +0 | <span style="background: #d4edda; padding: 2px;">£150-200: -2 (BEST)</span> | £201-300: +1 | £301+: +3</small><br>';
+    echo '<small><strong>Price Tiers:</strong> £0-69: +10 (no profit) | £70-149: +0 | <span style="background: #d4edda; padding: 2px;">£150-200: -2 (BEST)</span> | £201-300: +5 | £301+: +15</small><br>';
     echo '<small><strong>Delivery:</strong> 1=1-2 days | 2=3-4 days | 3=8-10 days | 4=14-21 days | 999=out of stock</small><br>';
-    echo '<small><strong>Color coding:</strong> <span style="background: #d4edda; padding: 2px;">Green = Best profit (£150-200)</span> | <span style="background: #f8d7da; padding: 2px;">Red = No profit (&lt;£80)</span></small></p>';
+    echo '<small><strong>Color coding:</strong> <span style="background: #d4edda; padding: 2px;">Green = Best profit (£150-200)</span> | <span style="background: #f8d7da; padding: 2px;">Red = No profit (&lt;£70)</span></small></p>';
 
     // Step 2: Show actual brand-alternated sort order
     echo '<h4 style="margin-top: 30px;">Step 2: Brand-Alternated Sort Order (First 80 Products)</h4>';
@@ -955,7 +955,7 @@ add_action('wp_ajax_debug_algorithm', function() {
         $price = $data['price'];
         if ($price >= 150 && $price <= 200) {
             $highlight = 'background: #d4edda;'; // Green for best profit margin
-        } elseif ($price < 80) {
+        } elseif ($price < 70) {
             $highlight = 'background: #f8d7da;'; // Red for no profit
         } else {
             $highlight = '';
