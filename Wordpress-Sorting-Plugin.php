@@ -265,8 +265,14 @@ function alternate_brands_for_category($category_id) {
             update_post_meta($product_id, $meta_key_prev, $current_value);
         }
 
-        // Update with new sort order
-        update_post_meta($product_id, $meta_key, $position);
+        // Update with new sort order - ensure it's an integer
+        $result = update_post_meta($product_id, $meta_key, intval($position));
+
+        // Log any failures
+        if ($result === false) {
+            error_log("Failed to update meta for product $product_id, meta_key: $meta_key, position: $position");
+        }
+
         $updated++;
     }
 
@@ -284,6 +290,79 @@ function alternate_brands_for_category($category_id) {
     $cat_name = $term ? $term->name : "ID $category_id";
 
     return "✓ Updated $updated products in category '$cat_name' (ID: $category_id). Meta key: {$meta_key}";
+}
+
+/**
+ * SIMPLE TEST VERSION - Uses original plugin logic without enhancements
+ * Use this to test if the basic sorting works on your site
+ */
+function test_simple_brand_alternation($category_id) {
+    global $wpdb;
+
+    $products_query = $wpdb->prepare("
+        SELECT p.ID as product_id, p.post_title as product_title
+        FROM {$wpdb->posts} p
+        JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
+        JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'product_cat'
+        WHERE p.post_type = 'product' AND p.post_status = 'publish'
+        AND tt.term_id = %d
+    ", $category_id);
+
+    $products = $wpdb->get_results($products_query);
+
+    if (empty($products)) {
+        return "Category $category_id: No products found.";
+    }
+
+    $brand_groups = array();
+
+    foreach ($products as $product) {
+        $product_id = $product->product_id;
+        $product_title = $product->product_title;
+
+        $brands = wp_get_post_terms($product_id, 'pa_brand');
+        $brand = !empty($brands) ? $brands[0]->name : 'no-brand';
+        $first_word = strtolower(trim(strtok($product_title, ' ')));
+
+        $brand_groups[$brand][$first_word][] = $product_id;
+    }
+
+    if (count($brand_groups) <= 1) {
+        return "Category $category_id: Only one brand found, skipping.";
+    }
+
+    foreach ($brand_groups as $brand => $first_word_groups) {
+        $group_list = array_values($first_word_groups);
+        shuffle($group_list);
+        $brand_grouped_lists[$brand] = $group_list;
+    }
+
+    $brand_keys = array_keys($brand_grouped_lists);
+    $sorted_products = array();
+    $position = 0;
+    $still_going = true;
+
+    while ($still_going) {
+        $still_going = false;
+        foreach ($brand_keys as $brand) {
+            if (!empty($brand_grouped_lists[$brand])) {
+                $group = array_shift($brand_grouped_lists[$brand]);
+                foreach ($group as $product_id) {
+                    $sorted_products[$position++] = $product_id;
+                }
+                $still_going = true;
+            }
+        }
+    }
+
+    $meta_key = 'rwpp_sortorder_' . $category_id;
+    $updated = 0;
+    foreach ($sorted_products as $position => $product_id) {
+        update_post_meta($product_id, $meta_key, intval($position));
+        $updated++;
+    }
+
+    return "TEST: Updated $updated products in category ID $category_id using ORIGINAL logic.";
 }
 
 /**
@@ -402,7 +481,8 @@ function alternate_brands_page() {
                     <option value="<?php echo $category->term_id; ?>"><?php echo $category->name; ?> (ID: <?php echo $category->term_id; ?>)</option>
                 <?php endforeach; ?>
             </select>
-            <input type="submit" name="run_alternation" class="button button-primary" value="Apply Brand Alternation">
+            <input type="submit" name="run_alternation" class="button button-primary" value="Apply Brand Alternation (Enhanced)">
+            <input type="submit" name="test_simple" class="button button-secondary" value="Test Simple Sort (Original Logic)" style="background: #ff9800; color: white;">
             <input type="submit" name="reverse_alternation" class="button button-secondary" value="Reverse Previous Sorting">
         </form>
 
@@ -410,6 +490,15 @@ function alternate_brands_page() {
         if (isset($_POST['run_alternation']) && isset($_POST['category_id'])) {
             $result = alternate_brands_for_category(intval($_POST['category_id']));
             echo '<div class="notice notice-success is-dismissible"><p>' . $result . '</p></div>';
+        }
+
+        if (isset($_POST['test_simple']) && isset($_POST['category_id'])) {
+            $result = test_simple_brand_alternation(intval($_POST['category_id']));
+            echo '<div class="notice notice-warning is-dismissible">
+                <p>' . $result . '</p>
+                <p><strong>Note:</strong> This uses the ORIGINAL plugin logic (no stock/date/delivery ranking).
+                If this works but the enhanced version doesn\'t, there may be an issue with the complex sorting logic.</p>
+            </div>';
         }
 
         if (isset($_POST['reverse_alternation']) && isset($_POST['category_id'])) {
