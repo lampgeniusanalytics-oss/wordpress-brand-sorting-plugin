@@ -243,96 +243,64 @@ function alternate_brands_for_category($category_id) {
 
         $brands = wp_get_post_terms($product_id, 'pa_brand');
         $brand = !empty($brands) ? $brands[0]->name : 'no-brand';
-        $first_word = strtolower(trim(strtok($product_title, ' ')));
 
-        $brand_groups[$brand][$first_word][] = $product_id;
+        // Store brand with product data
+        $product_data[$product_id]['brand'] = $brand;
     }
 
-    if (count($brand_groups) <= 1) {
+    if (count(array_unique(array_column($product_data, 'brand'))) <= 1) {
         return "Category $category_id: Only one brand found, skipping.";
     }
 
-    // Collect all ranges from all brands with their metadata
-    $all_ranges = array();
+    // Collect all products individually (no first-word grouping)
+    $all_products = array();
 
-    foreach ($brand_groups as $brand => $first_word_groups) {
-        foreach ($first_word_groups as $first_word => $product_ids) {
-            // Calculate stock percentage for this range (first-word group)
-            $total_products = count($product_ids);
-            $out_of_stock_count = 0;
-
-            foreach ($product_ids as $pid) {
-                if (!$product_data[$pid]['has_stock']) {
-                    $out_of_stock_count++;
-                }
-            }
-
-            $out_of_stock_percentage = ($out_of_stock_count / $total_products) * 100;
-            $is_mostly_out_of_stock = $out_of_stock_percentage > 60;
-
-            // Find the best rank in this group to determine group position
-            $best_rank = null;
-            $best_delivery_rank = 999;
-            foreach ($product_ids as $pid) {
-                if ($best_rank === null || $product_data[$pid]['rank'] < $best_rank) {
-                    $best_rank = $product_data[$pid]['rank'];
-                    $best_delivery_rank = $product_data[$pid]['delivery_rank'];
-                }
-            }
-
-            // Keep products together in the range - sort by product ID for consistency
-            sort($product_ids);
-
-            $all_ranges[] = array(
-                'brand' => $brand,
-                'first_word' => $first_word,
-                'products' => $product_ids,
-                'is_mostly_out_of_stock' => $is_mostly_out_of_stock,
-                'best_delivery_rank' => $best_delivery_rank,
-                'best_rank' => $best_rank,
-            );
-        }
+    foreach ($product_data as $product_id => $data) {
+        $all_products[] = array(
+            'product_id' => $product_id,
+            'brand' => $data['brand'],
+            'rank' => $data['rank'],
+            'has_stock' => $data['has_stock'],
+        );
     }
 
-    // Sort ALL ranges globally by value score
-    // 1. Stock threshold (groups with >60% out of stock go to back)
-    // 2. Best value score in the group (delivery + price combined)
-    usort($all_ranges, function($a, $b) {
-        // First, prioritize groups that are NOT mostly out of stock
-        if ($a['is_mostly_out_of_stock'] != $b['is_mostly_out_of_stock']) {
-            return $a['is_mostly_out_of_stock'] <=> $b['is_mostly_out_of_stock'];
+    // Sort ALL products individually by value score
+    // 1. Products without stock go to back
+    // 2. Value score (delivery + price combined)
+    usort($all_products, function($a, $b) {
+        // First, prioritize products that have stock
+        if ($a['has_stock'] != $b['has_stock']) {
+            return $b['has_stock'] <=> $a['has_stock'];
         }
-        // Then sort by best rank (value score)
-        return $a['best_rank'] <=> $b['best_rank'];
+        // Then sort by value score
+        return $a['rank'] <=> $b['rank'];
     });
 
-    // Apply soft brand alternation: prefer different brands but don't force it
+    // Apply soft brand alternation to individual products
     $sorted_products = array();
     $position = 0;
     $last_brand = null;
 
-    while (!empty($all_ranges)) {
+    while (!empty($all_products)) {
         $selected_index = 0;
 
-        // Try to find a range from a different brand within the next few options
+        // Try to find a product from a different brand within the next few options
         if ($last_brand !== null) {
             // Look ahead up to 3 positions to find a different brand
-            for ($i = 0; $i < min(3, count($all_ranges)); $i++) {
-                if ($all_ranges[$i]['brand'] !== $last_brand) {
+            for ($i = 0; $i < min(3, count($all_products)); $i++) {
+                if ($all_products[$i]['brand'] !== $last_brand) {
                     $selected_index = $i;
                     break;
                 }
             }
         }
 
-        // Take the selected range
-        $range = array_splice($all_ranges, $selected_index, 1)[0];
-        $last_brand = $range['brand'];
+        // Take the selected product
+        $product = array_splice($all_products, $selected_index, 1)[0];
+        $last_brand = $product['brand'];
 
-        // Add all products from this range
-        foreach ($range['products'] as $product_id) {
-            $sorted_products[$position++] = $product_id;
-        }
+        // Add this product to sorted list
+        $sorted_products[$position++] = $product['product_id'];
     }
 
     $meta_key = 'rwpp_sortorder_' . $category_id;
