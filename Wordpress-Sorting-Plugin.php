@@ -270,39 +270,48 @@ function alternate_brands_for_category($category_id) {
             $out_of_stock_percentage = ($out_of_stock_count / $total_products) * 100;
             $is_mostly_out_of_stock = $out_of_stock_percentage > 60;
 
-            // Sort products in this group by their rank
-            usort($product_ids, function($a, $b) use ($product_data) {
-                return $product_data[$a]['rank'] <=> $product_data[$b]['rank'];
-            });
+            // Find the best rank in this group to determine group position
+            $best_rank = null;
+            $best_delivery_rank = 999;
+            foreach ($product_ids as $pid) {
+                if ($best_rank === null || $product_data[$pid]['rank'] < $best_rank) {
+                    $best_rank = $product_data[$pid]['rank'];
+                    $best_delivery_rank = $product_data[$pid]['delivery_rank'];
+                }
+            }
+
+            // Keep products together in the range - sort by product ID for consistency
+            sort($product_ids);
 
             $sorted_groups[] = array(
                 'products' => $product_ids,
                 'is_mostly_out_of_stock' => $is_mostly_out_of_stock,
-                'best_delivery_rank' => $product_data[$product_ids[0]]['delivery_rank'],
+                'best_delivery_rank' => $best_delivery_rank,
+                'best_rank' => $best_rank,
             );
         }
 
         // Sort groups by:
         // 1. Stock threshold (groups with >60% out of stock go to back)
-        // 2. Best delivery rank in the group
+        // 2. Best value score in the group (delivery + price combined)
         usort($sorted_groups, function($a, $b) {
             // First, prioritize groups that are NOT mostly out of stock
             if ($a['is_mostly_out_of_stock'] != $b['is_mostly_out_of_stock']) {
                 return $a['is_mostly_out_of_stock'] <=> $b['is_mostly_out_of_stock'];
             }
-            // Then sort by best delivery rank
-            return $a['best_delivery_rank'] <=> $b['best_delivery_rank'];
+            // Then sort by best rank (value score)
+            return $a['best_rank'] <=> $b['best_rank'];
         });
 
         $brand_grouped_lists[$brand] = $sorted_groups;
     }
 
-    // Rank brands by their best product (first product in first group)
+    // Rank brands by their best value score (from their best range)
     $brand_keys = array_keys($brand_grouped_lists);
-    usort($brand_keys, function($a, $b) use ($brand_grouped_lists, $product_data) {
-        $best_product_a = $brand_grouped_lists[$a][0]['products'][0];
-        $best_product_b = $brand_grouped_lists[$b][0]['products'][0];
-        return $product_data[$best_product_a]['rank'] <=> $product_data[$best_product_b]['rank'];
+    usort($brand_keys, function($a, $b) use ($brand_grouped_lists) {
+        $best_rank_a = $brand_grouped_lists[$a][0]['best_rank'];
+        $best_rank_b = $brand_grouped_lists[$b][0]['best_rank'];
+        return $best_rank_a <=> $best_rank_b;
     });
 
     $sorted_products = array();
